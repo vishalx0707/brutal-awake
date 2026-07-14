@@ -1,0 +1,10 @@
+# Testing-only preview (uses a personal background image — not part of the product)
+_preview.html
+_preview_bg.jpeg
+
+# Build / editor junk
+*.pdb
+*.obj
+.vs/
+Thumbs.db
+desktop.ini
