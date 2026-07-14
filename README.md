@@ -1,5 +1,7 @@
 # Brutal Awake
 
+[![Download](https://img.shields.io/badge/Download-BrutalAwake.exe-2ea44f?style=for-the-badge)](https://github.com/vishalx0707/brutal-awake/releases/latest/download/BrutalAwake.exe)
+
 A minimal Windows desktop app that keeps your laptop awake — overriding every sleep and display-timeout setting, and keeping it running **even when the lid is closed** — behind a single on/off button.
 
 The interface is built with Apple's **Liquid Glass** material (real edge refraction, not just a blur) and genuine **SF Pro** typography, rendered in a frameless Chromium app-window.
@@ -21,7 +23,7 @@ Changing the lid-close action requires administrator rights, so the app requests
 
 ## Run
 
-Download **`BrutalAwake.exe`**, double-click it, and approve the UAC prompt.
+Download the latest **[BrutalAwake.exe](https://github.com/vishalx0707/brutal-awake/releases/latest/download/BrutalAwake.exe)** from the [Releases](https://github.com/vishalx0707/brutal-awake/releases) page, double-click it, and approve the UAC prompt.
 
 ## Build from source
 
@@ -43,7 +45,8 @@ Requires the .NET Framework C# compiler (ships with Windows) and Microsoft Edge 
 | `ui.html` | Liquid Glass UI |
 | `liquid-glass.js` | Apple-style refraction module ([deepika-builds/liquid-glass](https://github.com/deepika-builds/liquid-glass), MIT) |
 | `app.manifest` | Requests administrator elevation |
-| `BrutalAwake.exe` | Prebuilt app |
+
+The prebuilt `BrutalAwake.exe` is published on the [Releases](https://github.com/vishalx0707/brutal-awake/releases) page rather than tracked in the repo.
 
 ## Notes
 

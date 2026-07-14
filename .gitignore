@@ -8,3 +8,6 @@ _preview_bg.jpeg
 .vs/
 Thumbs.db
 desktop.ini
+
+# Prebuilt binary is distributed via GitHub Releases, not tracked here
+BrutalAwake.exe
