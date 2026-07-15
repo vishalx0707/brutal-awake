@@ -2,12 +2,22 @@
 _preview.html
 _preview_bg.jpeg
 
+# Internal session notes — never publish
+handoff.md
+
+# Dependencies / build output
+node_modules/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Binaries ship via GitHub Releases, not the repo
+*.exe
+*.dll
+*.msi
+
 # Build / editor junk
 *.pdb
 *.obj
 .vs/
 Thumbs.db
 desktop.ini
-
-# Prebuilt binary is distributed via GitHub Releases, not tracked here
-BrutalAwake.exe
