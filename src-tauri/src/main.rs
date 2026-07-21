@@ -1,7 +1,13 @@
 // Brutal Awake — Tauri backend.
-// Keeps the machine awake (SetThreadExecutionState) and, while ON, sets the
-// lid-close action to "Do Nothing" via powercfg, restoring the original value
-// on OFF or exit. Runs as a normal user — no elevation required.
+// Keeps the machine awake by three overlapping mechanisms, because no single
+// one is enough on modern hardware:
+//   1. SetThreadExecutionState — the classic "system/display required" hint.
+//   2. Sleep + hibernate idle timeouts forced to 0 (never) on the active power
+//      plan. THIS is what actually keeps Modern Standby (S0) laptops awake,
+//      where SetThreadExecutionState's system-required flag is ignored.
+//   3. Lid-close action forced to "Do Nothing" so a closed lid can't sleep it.
+// Every power-plan value is saved before it is changed and restored on OFF or
+// exit. Runs as a normal user — no elevation required.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -10,19 +16,28 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
+// Power-setting subgroup + setting GUIDs (stable across Windows installs).
 const SUB_BUTTONS: &str = "4f971e89-eebd-4455-a8de-9e59040e7347";
 const LIDACTION: &str = "5ca83367-6e45-459f-a27b-476b1d01c936";
+const SUB_SLEEP: &str = "238c9fa8-0aad-41ed-83f4-97be242c8f20";
+const STANDBYIDLE: &str = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"; // "Sleep after"
+const HIBERNATEIDLE: &str = "9d7815a6-7ee4-497e-8888-515a05f02364"; // "Hibernate after"
 
+// Original values of every power setting we override, so we can put them back.
 #[derive(Default)]
-struct Lid {
-    ac: Option<u32>,
-    dc: Option<u32>,
+struct Saved {
+    lid_ac: Option<u32>,
+    lid_dc: Option<u32>,
+    sleep_ac: Option<u32>,
+    sleep_dc: Option<u32>,
+    hib_ac: Option<u32>,
+    hib_dc: Option<u32>,
 }
 
 struct Shared {
     on: Mutex<bool>,
     cv: Condvar,
-    lid: Mutex<Lid>,
+    saved: Mutex<Saved>,
 }
 
 // --- Keep-awake (SetThreadExecutionState) -------------------------------
@@ -74,7 +89,7 @@ fn another_instance_running() -> bool {
 
 // --- Lid-close action (powercfg) ----------------------------------------
 
-fn powercfg(args: &[&str]) -> String {
+fn run_powercfg(args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("powercfg");
     cmd.args(args);
     #[cfg(windows)]
@@ -83,40 +98,95 @@ fn powercfg(args: &[&str]) -> String {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+    match cmd.output() {
+        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!(
+                "powercfg {:?} failed (code: {:?}): {}",
+                args,
+                output.status.code(),
+                stderr.trim()
+            ))
+        }
+        Err(err) => Err(format!("failed to execute powercfg {:?}: {}", args, err)),
+    }
 }
 
-fn parse_hex(out: &str, key: &str) -> Option<u32> {
-    out.lines()
-        .find(|l| l.contains(key))
-        .and_then(|l| l.split("0x").nth(1))
-        .and_then(|h| u32::from_str_radix(h.trim(), 16).ok())
+fn powercfg(args: &[&str]) -> String {
+    match run_powercfg(args) {
+        Ok(out) => out,
+        Err(err) => {
+            eprintln!("{err}");
+            String::new()
+        }
+    }
 }
 
-fn query_lid() -> (Option<u32>, Option<u32>) {
-    let out = powercfg(&["/query", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION]);
+fn parse_first_hex(out: &str) -> Option<u32> {
+    for token in out.split_whitespace() {
+        if let Some(hex) = token.strip_prefix("0x") {
+            if let Ok(value) = u32::from_str_radix(hex.trim(), 16) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+// Read the current AC and DC index for one power setting.
+fn query_setting(sub: &str, setting: &str) -> (Option<u32>, Option<u32>) {
+    let ac_out = powercfg(&["/getacvalueindex", "SCHEME_CURRENT", sub, setting]);
+    let dc_out = powercfg(&["/getdcvalueindex", "SCHEME_CURRENT", sub, setting]);
     (
-        parse_hex(&out, "Current AC Power Setting Index:"),
-        parse_hex(&out, "Current DC Power Setting Index:"),
+        parse_first_hex(&ac_out),
+        parse_first_hex(&dc_out),
     )
 }
 
-fn set_lid(value: u32) {
+// Set one power setting's AC and DC index (no /setactive — caller batches it).
+fn set_setting(sub: &str, setting: &str, value: u32) {
     let v = value.to_string();
-    powercfg(&["/setacvalueindex", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION, &v]);
-    powercfg(&["/setdcvalueindex", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION, &v]);
+    powercfg(&["/setacvalueindex", "SCHEME_CURRENT", sub, setting, &v]);
+    powercfg(&["/setdcvalueindex", "SCHEME_CURRENT", sub, setting, &v]);
+}
+
+// Restore one setting's AC/DC index if we recorded originals for it.
+fn restore_setting(sub: &str, setting: &str, ac: Option<u32>, dc: Option<u32>) {
+    if let Some(v) = ac {
+        powercfg(&["/setacvalueindex", "SCHEME_CURRENT", sub, setting, &v.to_string()]);
+    }
+    if let Some(v) = dc {
+        powercfg(&["/setdcvalueindex", "SCHEME_CURRENT", sub, setting, &v.to_string()]);
+    }
+}
+
+// Save every value we are about to override (only on the first transition to
+// ON — guarded by the caller so we never re-save our own forced values), then
+// force lid=Do Nothing and sleep/hibernate timeouts to 0 (never).
+fn force_awake(saved: &mut Saved) {
+    if saved.lid_ac.is_none() && saved.lid_dc.is_none() {
+        let (ac, dc) = query_setting(SUB_BUTTONS, LIDACTION);
+        saved.lid_ac = ac;
+        saved.lid_dc = dc;
+        let (sac, sdc) = query_setting(SUB_SLEEP, STANDBYIDLE);
+        saved.sleep_ac = sac;
+        saved.sleep_dc = sdc;
+        let (hac, hdc) = query_setting(SUB_SLEEP, HIBERNATEIDLE);
+        saved.hib_ac = hac;
+        saved.hib_dc = hdc;
+    }
+    set_setting(SUB_BUTTONS, LIDACTION, 0); // 0 = Do nothing on lid close
+    set_setting(SUB_SLEEP, STANDBYIDLE, 0); // 0 = never sleep
+    set_setting(SUB_SLEEP, HIBERNATEIDLE, 0); // 0 = never hibernate
     powercfg(&["/setactive", "SCHEME_CURRENT"]);
 }
 
-fn restore_lid(lid: &Lid) {
-    if let Some(ac) = lid.ac {
-        powercfg(&["/setacvalueindex", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION, &ac.to_string()]);
-    }
-    if let Some(dc) = lid.dc {
-        powercfg(&["/setdcvalueindex", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION, &dc.to_string()]);
-    }
+// Put every overridden power setting back to what the user had.
+fn restore_all(saved: &Saved) {
+    restore_setting(SUB_BUTTONS, LIDACTION, saved.lid_ac, saved.lid_dc);
+    restore_setting(SUB_SLEEP, STANDBYIDLE, saved.sleep_ac, saved.sleep_dc);
+    restore_setting(SUB_SLEEP, HIBERNATEIDLE, saved.hib_ac, saved.hib_dc);
     powercfg(&["/setactive", "SCHEME_CURRENT"]);
 }
 
@@ -125,17 +195,12 @@ fn restore_lid(lid: &Lid) {
 #[tauri::command]
 fn set_awake(on: bool, shared: State<Arc<Shared>>) {
     {
-        let mut lid = shared.lid.lock().unwrap();
+        let mut saved = shared.saved.lock().unwrap();
         if on {
-            if lid.ac.is_none() && lid.dc.is_none() {
-                let (ac, dc) = query_lid();
-                lid.ac = ac;
-                lid.dc = dc;
-            }
-            set_lid(0); // 0 = Do nothing on lid close
+            force_awake(&mut saved);
         } else {
-            restore_lid(&lid);
-            *lid = Lid::default();
+            restore_all(&saved);
+            *saved = Saved::default();
         }
     }
     *shared.on.lock().unwrap() = on;
@@ -146,8 +211,8 @@ fn set_awake(on: bool, shared: State<Arc<Shared>>) {
 fn quit(app: AppHandle, shared: State<Arc<Shared>>) {
     let on = *shared.on.lock().unwrap();
     if on {
-        let lid = shared.lid.lock().unwrap();
-        restore_lid(&lid);
+        let saved = shared.saved.lock().unwrap();
+        restore_all(&saved);
     }
     app.exit(0);
 }
@@ -165,17 +230,14 @@ fn main() {
     let shared = Arc::new(Shared {
         on: Mutex::new(true),
         cv: Condvar::new(),
-        lid: Mutex::new(Lid::default()),
+        saved: Mutex::new(Saved::default()),
     });
 
-    // Save the user's current lid-close action and force "Do nothing" so the
-    // machine survives a closed lid from the moment it launches.
+    // Save the user's current power settings and force the machine awake from
+    // the moment it launches: never sleep, never hibernate, ignore lid close.
     {
-        let mut lid = shared.lid.lock().unwrap();
-        let (ac, dc) = query_lid();
-        lid.ac = ac;
-        lid.dc = dc;
-        set_lid(0); // 0 = Do nothing on lid close
+        let mut saved = shared.saved.lock().unwrap();
+        force_awake(&mut saved);
     }
 
     // Dedicated thread owns the execution-state assertion and re-asserts it
@@ -218,8 +280,8 @@ fn main() {
                 let shared = window.state::<Arc<Shared>>();
                 let on = *shared.on.lock().unwrap();
                 if on {
-                    let lid = shared.lid.lock().unwrap();
-                    restore_lid(&lid);
+                    let saved = shared.saved.lock().unwrap();
+                    restore_all(&saved);
                 }
             }
         })
