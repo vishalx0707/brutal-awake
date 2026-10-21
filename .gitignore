@@ -1,14 +1,10 @@
-# Testing-only preview (uses a personal background image — not part of the product)
+# Native build output
+/target/
+/dist/
+
+# Personal preview assets must stay local if recreated
 _preview.html
 _preview_bg.jpeg
-
-# Internal session notes — never publish
-handoff.md
-
-# Dependencies / build output
-node_modules/
-src-tauri/target/
-src-tauri/gen/schemas/
 
 # Binaries ship via GitHub Releases, not the repo
 *.exe

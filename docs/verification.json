@@ -1,0 +1,16 @@
+{
+  "exeBytes": 108032,
+  "workingSetMiB": 13.27,
+  "privateMiBBeforeIdle": 1.96,
+  "privateMiBAfterIdle": 1.96,
+  "idleSeconds": 30,
+  "idleCpuMilliseconds": 31.25,
+  "threads": 4,
+  "childProcesses": 0,
+  "gdiBefore": 16,
+  "gdiAfter500Toggles": 16,
+  "powerPlanUnchanged": true,
+  "toggleAndSingleInstancePassed": true,
+  "keyboardTogglePassed": true,
+  "cleanExitPassed": true
+}

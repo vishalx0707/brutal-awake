@@ -1,35 +1,34 @@
 # Brutal Awake
 
-A minimal Windows app that keeps your laptop awake — no sleep, no display-off, **even with the lid closed** — until you toggle it off or shut down. No admin rights, no UAC prompt.
+One Windows toggle. ON prevents idle sleep and display timeout. OFF allows your normal Windows behavior. It starts ON; minimizing keeps it working, and closing it exits completely. Closing the lid and choosing Sleep still follow Windows settings.
 
-Built with Tauri v2 (Rust + WebView2). One window, one switch, Swiss-style paper UI.
+The paper background, status word and switch are drawn directly by Windows. No browser, Node, .NET, service, tray worker, updater, network access, telemetry, or settings files. One executable, one UI thread; Windows may create its own helper threads. There is no polling or animation loop.
 
-## How it works
+## Run or replace your installed copy
 
-- Keep-awake starts **ON at launch**. Toggle OFF to allow sleep again.
-- Uses `SetThreadExecutionState` (system + display + away-mode), re-asserted every 25 seconds, so it overrides whatever your power plan says.
-- While ON, the lid-close action is set to *Do Nothing* (battery and plugged-in) via `powercfg`, and your original setting is **restored** when you toggle off or close the app.
-- Single instance — launching it twice won't disturb the running copy or your saved settings.
+Run `dist\BrutalAwake.exe`. No installer or administrator access is needed.
 
-## Install
+To update the copy you already installed, close the old app **normally** so it can restore its power settings. Copy `dist\BrutalAwake.exe` into `%LOCALAPPDATA%\Brutal Awake\` and rename the copied file to **`brutal-awake.exe`**, replacing the old file. Keep the hyphen so your existing shortcut opens the new version. The installed copy is not automatically changed by edits in this repository.
 
-Download the installer from the [Releases](https://github.com/vishalx0707/brutal-awake/releases) page and run it. Per-user install, no admin needed. (Windows SmartScreen may warn on first run since the binary is unsigned — choose "More info" → "Run anyway".)
+The new toggle never changes your sleep, hibernate or lid settings. It does not repair settings previously left changed by a crashed old version; check Windows Power Options if that happened.
 
-## Build from source
+## Build
 
-Requires [Rust](https://rustup.rs/) (with the MSVC toolchain), Node.js, and the Microsoft C++ Build Tools.
+Requires the Windows MSVC Rust toolchain and Microsoft C++ Build Tools. No npm install or browser runtime is required.
 
 ```powershell
-npm install
-npx tauri build
+.\build.ps1
 ```
 
-Output: `src-tauri/target/release/brutal-awake.exe` and an NSIS installer under `src-tauri/target/release/bundle/nsis/`.
+Only `dist\BrutalAwake.exe` is needed at runtime. `target\` contains disposable compiler output; `cargo clean` removes it after building.
 
-## Caveat
+## Verify
 
-If the app is force-killed (Task Manager "End task"), it can't run its cleanup, so the lid-close action may stay at *Do Nothing*. Launch the app and close it normally to restore your setting.
+```powershell
+cargo test --release --locked
+.\tests\smoke.ps1
+```
 
-## License
+The native test checks the Windows execution flags on the thread that owns them. The smoke check launches its own copy, tests startup, duplicate prevention, 500 toggles, resize, minimize, idle CPU/memory, unchanged power settings, and complete exit. It saves screenshots and measurements under `docs\`. Close other copies before running the smoke check.
 
-MIT
+See [CHANGES.md](CHANGES.md) for the audit and plain-language explanations. MIT license.
